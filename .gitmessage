@@ -1,0 +1,22 @@
+# <type>(<ticket-id>): <short summary>
+#
+# Example:
+# feat(zg-0001): add config loader
+#
+# Types:
+# feat:     new feature
+# fix:      bug fix
+# docs:     documentation only
+# test:     tests only
+# refactor: code change that neither fixes a bug nor adds a feature
+# chore:    build, tooling, maintenance, or repo housekeeping
+#
+# Ticket ID:
+# Mandatory. Use zg- followed by exactly 4 numbers, for example zg-0001.
+#
+# Body:
+# Explain what changed and why. Wrap lines at around 72 characters.
+#
+# Footer:
+# BREAKING CHANGE: describe incompatible changes
+# Closes: #123
