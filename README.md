@@ -6,11 +6,12 @@ The package currently supports JSON and dotenv files through the default registr
 
 ## Installation
 
-```sh
+```
 go get github.com/maneeshaindrachapa/zenith
 ```
 
 ## Quick Usage
+### JSON Usage
 
 Create a config file:
 
@@ -59,9 +60,9 @@ var cfg Config
 err := zenith.Decode([]byte(`{"name":"Zenith","port":8080}`), "json", &cfg)
 ```
 
-## Dotenv Usage
+### Dotenv Usage
 
-```sh
+```
 NAME="Zenith"
 PORT="8080"
 ENABLED="true"
@@ -80,7 +81,7 @@ var cfg Config
 err := zenith.Load(".env", &cfg)
 ```
 
-## Struct Mapping
+### Struct Mapping
 
 Zenith maps decoded values into exported struct fields.
 
@@ -123,7 +124,7 @@ You can inspect the current registry:
 formats := encoding.RegisteredFormats()
 ```
 
-## Registering a Custom Codec
+### Registering a Custom Codec
 
 A codec implements both `Encode` and `Decode`:
 
@@ -146,47 +147,64 @@ After registration, `zenith.Load("config.custom", &cfg)` and `zenith.Decode(data
 
 ## Architecture
 
-Zenith follows a hexagonal architecture style, also called ports and adapters.
+Zenith follows a hexagonal architecture style, also called ports and adapters. The public API is intentionally thin, and the application service depends on interfaces, not concrete implementations. Concrete details live outside the application core as adapters.
 
-The public API is intentionally thin:
+```mermaid
+flowchart TD
+    Caller["caller"]
+    API["zenith.Load / zenith.Decode\n(zenith.go)"]
+    Loader["config.Loader\ninternal/app/config"]
+    FR["ports.FileReader"]
+    DR["ports.DecoderRegistry"]
+    MP["ports.Mapper"]
 
-```text
-caller
-  |
-  v
-zenith.Load / zenith.Decode
-  |
-  v
-internal/app/config.Loader
-  |
-  +-- ports.FileReader
-  +-- ports.DecoderRegistry
-  +-- ports.Mapper
+    Caller --> API --> Loader
+    Loader --> FR
+    Loader --> DR
+    Loader --> MP
+
+    FR -.implemented by.-> FROS["filereader.OS\n(os.ReadFile)"]
+    DR -.implemented by.-> ENC["encoding.Registry\n(DefaultRegistry)"]
+    MP -.implemented by.-> MAP["mapper.Reflect\n(reflection-based mapping)"]
+
+    ENC --> JSONC["codec/json"]
+    ENC --> ENVC["codec/dotenv"]
+    ENC -.not yet registered.-> TOMLC["codec/toml"]
+    ENC -.not yet registered.-> YAMLC["codec/yaml"]
 ```
-
-The application service depends on interfaces, not concrete implementations. Concrete details live outside the application core as adapters.
 
 ### Layers
 
-```text
-.
-├── zenith.go
-├── encoding/
-│   └── codec.go
-└── internal/
-    ├── ports/
-    │   └── codec.go
-    ├── app/
-    │   └── config/
-    │       └── loader.go
-    └── adapters/
-        ├── codec/
-        │   ├── dotenv/
-        │   ├── json/
-        │   ├── toml/
-        │   └── yaml/
-        ├── filereader/
-        └── mapper/
+```mermaid
+flowchart LR
+    subgraph root["module root"]
+        Z["zenith.go\n(composition layer)"]
+        subgraph ENC["encoding/"]
+            C["codec.go\n(public registry facade)"]
+        end
+    end
+
+    subgraph INT["internal/"]
+        subgraph PORTS["ports/"]
+            P["codec.go\nFileReader · DecoderRegistry\nMapper · Codec"]
+        end
+        subgraph APP["app/config/"]
+            L["loader.go\nLoader (use case)"]
+        end
+        subgraph ADAPTERS["adapters/"]
+            direction TB
+            CODEC["codec/\ndotenv · json · toml · yaml"]
+            FILE["filereader/\nOS"]
+            MAPPER["mapper/\nReflect"]
+        end
+    end
+
+    Z --> ENC
+    Z --> APP
+    Z --> ADAPTERS
+    APP --> PORTS
+    ADAPTERS -. implements .-> PORTS
+    ENC -. wraps .-> CODEC
 ```
 
 ### How The Pieces Connect
@@ -205,13 +223,33 @@ The application service depends on interfaces, not concrete implementations. Con
 - `Decoder` parses bytes into `map[string]any`.
 - `Mapper` maps decoded values into a struct.
 
-`internal/app/config` contains the use case:
+`internal/app/config` contains the use case, shown here for `zenith.Load`:
 
-1. Get the file extension.
-2. Read the file.
-3. Pick a decoder from the registry.
-4. Decode bytes into a map.
-5. Map the map into the caller's struct.
+```mermaid
+sequenceDiagram
+    participant Caller
+    participant zenith as zenith.Load
+    participant Loader as config.Loader
+    participant FileReader as ports.FileReader
+    participant Registry as ports.DecoderRegistry
+    participant Decoder as ports.Decoder
+    participant Mapper as ports.Mapper
+
+    Caller->>zenith: Load(path, &cfg)
+    zenith->>Loader: Load(path, target)
+    Loader->>Loader: format = filepath.Ext(path)
+    Loader->>FileReader: ReadFile(path)
+    FileReader-->>Loader: data, err
+    Loader->>Loader: Decode(data, format, target)
+    Loader->>Registry: DecoderFor(format)
+    Registry-->>Loader: decoder
+    Loader->>Decoder: Decode(data, &values)
+    Decoder-->>Loader: map[string]any
+    Loader->>Mapper: MapToStruct(values, target)
+    Mapper-->>Loader: err
+    Loader-->>zenith: err
+    zenith-->>Caller: err
+```
 
 `internal/adapters` contains implementations:
 
@@ -233,13 +271,13 @@ The application service depends on interfaces, not concrete implementations. Con
 
 Run all tests with package coverage:
 
-```sh
+```
 make test
 ```
 
 Generate a coverage profile and function-level coverage report:
 
-```sh
+```
 make coverage
 ```
 
