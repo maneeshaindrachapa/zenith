@@ -124,7 +124,7 @@ func TestReflectMapToStructConversionErrors(t *testing.T) {
 		{
 			name:      "invalid bool",
 			input:     map[string]any{"enabled": "maybe"},
-			wantError: "map field Enabled",
+			wantError: "map field enabled",
 		},
 		{
 			name:      "fractional int",
@@ -174,5 +174,141 @@ func TestReflectMapToStructConversionErrors(t *testing.T) {
 				t.Fatalf("MapToStruct() error = %q, want containing %q", err, tt.wantError)
 			}
 		})
+	}
+}
+
+type strictConfig struct {
+	Name     string             `json:"name" required:"true"`
+	Port     int                `json:"port" default:"8080"`
+	Region   string             `json:"region" default:"us-east-1"`
+	Database strictDatabase     `json:"database"`
+	Extra    map[string]string  `json:"extra"`
+	Mode     requiredByValidate `json:"mode" validate:"required"`
+}
+
+type strictDatabase struct {
+	Host string `json:"host" required:"true"`
+	Port int    `json:"port" default:"5432"`
+}
+
+type requiredByValidate string
+
+type validatingConfig struct {
+	Name string `json:"name"`
+}
+
+func (c *validatingConfig) Validate() error {
+	if c.Name != "Zenith" {
+		return fmt.Errorf("name must be Zenith")
+	}
+	return nil
+}
+
+func TestReflectStrictModeRejectsUnknownFields(t *testing.T) {
+	var got struct {
+		Database strictDatabase `json:"database"`
+	}
+	err := (Reflect{Options: Options{Strict: true}}).MapToStruct(map[string]any{
+		"database": map[string]any{
+			"host":    "db.local",
+			"unknown": "value",
+		},
+	}, &got)
+
+	if err == nil {
+		t.Fatal("MapToStruct() returned nil error")
+	}
+	if !strings.Contains(err.Error(), "database.unknown") {
+		t.Fatalf("MapToStruct() error = %q, want database.unknown", err)
+	}
+}
+
+func TestReflectAppliesDefaults(t *testing.T) {
+	var got strictConfig
+	if err := (Reflect{}).MapToStruct(map[string]any{
+		"name":     "Zenith",
+		"database": map[string]any{"host": "db.local"},
+		"mode":     "prod",
+	}, &got); err != nil {
+		t.Fatalf("MapToStruct() returned error: %v", err)
+	}
+
+	if got.Port != 8080 {
+		t.Fatalf("Port = %d, want %d", got.Port, 8080)
+	}
+	if got.Region != "us-east-1" {
+		t.Fatalf("Region = %q, want %q", got.Region, "us-east-1")
+	}
+	if got.Database.Port != 5432 {
+		t.Fatalf("Database.Port = %d, want %d", got.Database.Port, 5432)
+	}
+}
+
+func TestReflectRequiredFieldErrorsUsePaths(t *testing.T) {
+	var got strictConfig
+	err := (Reflect{}).MapToStruct(map[string]any{
+		"name":     "Zenith",
+		"database": map[string]any{},
+		"mode":     "prod",
+	}, &got)
+
+	if err == nil {
+		t.Fatal("MapToStruct() returned nil error")
+	}
+	if !strings.Contains(err.Error(), "database.host") {
+		t.Fatalf("MapToStruct() error = %q, want database.host", err)
+	}
+}
+
+func TestReflectValidateRequiredTag(t *testing.T) {
+	var got strictConfig
+	err := (Reflect{}).MapToStruct(map[string]any{
+		"name":     "Zenith",
+		"database": map[string]any{"host": "db.local"},
+	}, &got)
+
+	if err == nil {
+		t.Fatal("MapToStruct() returned nil error")
+	}
+	if !strings.Contains(err.Error(), "mode") {
+		t.Fatalf("MapToStruct() error = %q, want mode", err)
+	}
+}
+
+func TestReflectEmptyStringOverwritesByDefault(t *testing.T) {
+	got := struct {
+		Name string `json:"name"`
+	}{Name: "existing"}
+
+	if err := (Reflect{}).MapToStruct(map[string]any{"name": ""}, &got); err != nil {
+		t.Fatalf("MapToStruct() returned error: %v", err)
+	}
+	if got.Name != "" {
+		t.Fatalf("Name = %q, want empty string", got.Name)
+	}
+}
+
+func TestReflectPreserveExistingOnEmpty(t *testing.T) {
+	got := struct {
+		Name string `json:"name"`
+	}{Name: "existing"}
+
+	err := (Reflect{Options: Options{PreserveExistingOnEmpty: true}}).MapToStruct(map[string]any{"name": ""}, &got)
+	if err != nil {
+		t.Fatalf("MapToStruct() returned error: %v", err)
+	}
+	if got.Name != "existing" {
+		t.Fatalf("Name = %q, want %q", got.Name, "existing")
+	}
+}
+
+func TestReflectCallsValidateMethod(t *testing.T) {
+	var got validatingConfig
+	err := (Reflect{}).MapToStruct(map[string]any{"name": "Wrong"}, &got)
+	if err == nil {
+		t.Fatal("MapToStruct() returned nil error")
+	}
+	if !strings.Contains(err.Error(), "validate config") {
+		t.Fatalf("MapToStruct() error = %q, want validation context", err)
 	}
 }

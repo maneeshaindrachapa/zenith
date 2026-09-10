@@ -164,6 +164,31 @@ func assertAppConfig(t *testing.T, got appConfig) {
 	}
 }
 
+func TestDecodeWithStrictMapping(t *testing.T) {
+	var got struct {
+		Name string `json:"name"`
+	}
+
+	err := Decode([]byte(`{"name":"Zenith","unknown":"value"}`), "json", &got, WithStrictMapping())
+	if err == nil {
+		t.Fatal("Decode() returned nil error")
+	}
+}
+
+func TestDecodeWithPreserveExistingOnEmpty(t *testing.T) {
+	got := struct {
+		Name string `json:"name"`
+	}{Name: "existing"}
+
+	err := Decode([]byte(`{"name":""}`), "json", &got, WithPreserveExistingOnEmpty())
+	if err != nil {
+		t.Fatalf("Decode() returned error: %v", err)
+	}
+	if got.Name != "existing" {
+		t.Fatalf("Name = %q, want %q", got.Name, "existing")
+	}
+}
+
 func TestLoadErrors(t *testing.T) {
 	if err := Load(filepath.Join(t.TempDir(), "config"), &appConfig{}); err == nil {
 		t.Fatal("Load() without extension returned nil error")

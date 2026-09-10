@@ -4,6 +4,7 @@ import (
 	"encoding"
 	"fmt"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -14,11 +15,23 @@ var (
 	durationType        = reflect.TypeOf(time.Duration(0))
 )
 
+type validator interface {
+	Validate() error
+}
+
+// Options controls how Reflect maps decoded values.
+type Options struct {
+	Strict                  bool
+	PreserveExistingOnEmpty bool
+}
+
 // Reflect maps decoded values into structs with reflection.
-type Reflect struct{}
+type Reflect struct {
+	Options Options
+}
 
 // MapToStruct copies values from data into the struct pointed to by target.
-func (Reflect) MapToStruct(data map[string]any, target any) error {
+func (mapper Reflect) MapToStruct(data map[string]any, target any) error {
 	if target == nil {
 		return fmt.Errorf("map to struct: target is nil")
 	}
@@ -33,15 +46,31 @@ func (Reflect) MapToStruct(data map[string]any, target any) error {
 		return fmt.Errorf("map to struct: target must point to a struct")
 	}
 
-	return fillStruct(data, structValue)
-}
-
-func fillStruct(data map[string]any, structValue reflect.Value) error {
-	values := make(map[string]any, len(data))
-	for key, value := range data {
-		values[normalizeKey(key)] = value
+	if err := mapper.fillStruct(data, structValue, ""); err != nil {
+		return err
 	}
 
+	if targetValidator, ok := target.(validator); ok {
+		if err := targetValidator.Validate(); err != nil {
+			return fmt.Errorf("validate config: %w", err)
+		}
+	}
+
+	return nil
+}
+
+type mappedValue struct {
+	key   string
+	value any
+}
+
+func (mapper Reflect) fillStruct(data map[string]any, structValue reflect.Value, path string) error {
+	values := make(map[string]mappedValue, len(data))
+	for key, value := range data {
+		values[normalizeKey(key)] = mappedValue{key: key, value: value}
+	}
+
+	used := make(map[string]struct{})
 	structType := structValue.Type()
 	for i := 0; i < structValue.NumField(); i++ {
 		fieldType := structType.Field(i)
@@ -50,27 +79,57 @@ func fillStruct(data map[string]any, structValue reflect.Value) error {
 			continue
 		}
 
-		value, found := lookupFieldValue(values, fieldType)
+		fieldPath := joinPath(path, fieldDisplayName(fieldType))
+		item, key, found := lookupFieldValue(values, fieldType)
 		if !found {
+			defaultValue, hasDefault := fieldType.Tag.Lookup("default")
+			if hasDefault {
+				if err := mapper.assignValue(fieldValue, defaultValue, fieldPath); err != nil {
+					return fmt.Errorf("map field %s: %w", fieldPath, err)
+				}
+				continue
+			}
+			if fieldRequired(fieldType) {
+				return fmt.Errorf("map field %s: required value is missing", fieldPath)
+			}
 			continue
 		}
+		used[key] = struct{}{}
 
-		if err := assignValue(fieldValue, value); err != nil {
-			return fmt.Errorf("map field %s: %w", fieldType.Name, err)
+		if mapper.Options.PreserveExistingOnEmpty && isEmptyString(item.value) {
+			if fieldRequired(fieldType) {
+				return fmt.Errorf("map field %s: required value is empty", fieldPath)
+			}
+			continue
+		}
+		if fieldRequired(fieldType) && isEmptyString(item.value) {
+			return fmt.Errorf("map field %s: required value is empty", fieldPath)
+		}
+
+		if err := mapper.assignValue(fieldValue, item.value, fieldPath); err != nil {
+			return fmt.Errorf("map field %s: %w", fieldPath, err)
+		}
+	}
+
+	if mapper.Options.Strict {
+		unknown := unknownKeys(values, used, path)
+		if len(unknown) > 0 {
+			return fmt.Errorf("map to struct: unknown field %s", unknown[0])
 		}
 	}
 
 	return nil
 }
 
-func lookupFieldValue(values map[string]any, field reflect.StructField) (any, bool) {
+func lookupFieldValue(values map[string]mappedValue, field reflect.StructField) (mappedValue, string, bool) {
 	for _, name := range fieldNames(field) {
-		value, ok := values[normalizeKey(name)]
+		key := normalizeKey(name)
+		value, ok := values[key]
 		if ok {
-			return value, true
+			return value, key, true
 		}
 	}
-	return nil, false
+	return mappedValue{}, "", false
 }
 
 func fieldNames(field reflect.StructField) []string {
@@ -87,6 +146,33 @@ func fieldNames(field reflect.StructField) []string {
 	return names
 }
 
+func fieldDisplayName(field reflect.StructField) string {
+	for _, tag := range []string{"zenith", "json", "env", "mapstructure"} {
+		name := strings.Split(field.Tag.Get(tag), ",")[0]
+		if name == "-" {
+			return field.Name
+		}
+		if name != "" {
+			return name
+		}
+	}
+	return field.Name
+}
+
+func fieldRequired(field reflect.StructField) bool {
+	if field.Tag.Get("required") == "true" {
+		return true
+	}
+	for _, tag := range []string{"zenith", "validate"} {
+		for _, option := range strings.Split(field.Tag.Get(tag), ",") {
+			if strings.TrimSpace(option) == "required" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func normalizeKey(key string) string {
 	key = strings.TrimSpace(strings.ToLower(key))
 	key = strings.ReplaceAll(key, "_", "")
@@ -94,7 +180,31 @@ func normalizeKey(key string) string {
 	return key
 }
 
-func assignValue(target reflect.Value, value any) error {
+func joinPath(parent string, field string) string {
+	if parent == "" {
+		return field
+	}
+	return parent + "." + field
+}
+
+func unknownKeys(values map[string]mappedValue, used map[string]struct{}, path string) []string {
+	unknown := make([]string, 0)
+	for key, item := range values {
+		if _, ok := used[key]; ok {
+			continue
+		}
+		unknown = append(unknown, joinPath(path, item.key))
+	}
+	sort.Strings(unknown)
+	return unknown
+}
+
+func isEmptyString(value any) bool {
+	text, ok := value.(string)
+	return ok && text == ""
+}
+
+func (mapper Reflect) assignValue(target reflect.Value, value any, path string) error {
 	if !target.CanSet() {
 		return nil
 	}
@@ -106,7 +216,7 @@ func assignValue(target reflect.Value, value any) error {
 		if target.IsNil() {
 			target.Set(reflect.New(target.Type().Elem()))
 		}
-		return assignValue(target.Elem(), value)
+		return mapper.assignValue(target.Elem(), value, path)
 	}
 
 	if target.CanAddr() && target.Addr().Type().Implements(textUnmarshalerType) {
@@ -142,9 +252,9 @@ func assignValue(target reflect.Value, value any) error {
 		if !ok {
 			return fmt.Errorf("expected object, got %T", value)
 		}
-		return fillStruct(nested, target)
+		return mapper.fillStruct(nested, target, path)
 	case reflect.Slice:
-		return assignSlice(target, value)
+		return mapper.assignSlice(target, value, path)
 	case reflect.String:
 		target.SetString(fmt.Sprint(value))
 	case reflect.Bool:
@@ -198,7 +308,7 @@ func isScalarKind(kind reflect.Kind) bool {
 	}
 }
 
-func assignSlice(target reflect.Value, value any) error {
+func (mapper Reflect) assignSlice(target reflect.Value, value any, path string) error {
 	source := reflect.ValueOf(value)
 	if !source.IsValid() || source.Kind() != reflect.Slice {
 		return fmt.Errorf("expected slice, got %T", value)
@@ -206,7 +316,7 @@ func assignSlice(target reflect.Value, value any) error {
 
 	result := reflect.MakeSlice(target.Type(), source.Len(), source.Len())
 	for i := 0; i < source.Len(); i++ {
-		if err := assignValue(result.Index(i), source.Index(i).Interface()); err != nil {
+		if err := mapper.assignValue(result.Index(i), source.Index(i).Interface(), fmt.Sprintf("%s[%d]", path, i)); err != nil {
 			return fmt.Errorf("index %d: %w", i, err)
 		}
 	}

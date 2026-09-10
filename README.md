@@ -60,6 +60,18 @@ var cfg Config
 err := zenith.Decode([]byte(`{"name":"Zenith","port":8080}`), "json", &cfg)
 ```
 
+Strict mapping is available when unknown fields should fail fast:
+
+```go
+err := zenith.Load("config.json", &cfg, zenith.WithStrictMapping())
+```
+
+By default, an explicit empty string in config overwrites the existing struct value. To keep existing values when the config value is `""`, use:
+
+```go
+err := zenith.Load("config.json", &cfg, zenith.WithPreserveExistingOnEmpty())
+```
+
 ### Dotenv Usage
 
 ```
@@ -91,6 +103,9 @@ Supported tags:
 - `json`
 - `env`
 - `mapstructure`
+- `default`
+- `required`
+- `validate`
 
 Supported value types:
 
@@ -107,6 +122,31 @@ Supported value types:
 Field matching is normalized, so names such as `PORT`, `port`, `max_connections`, `max-connections`, and `MaxConnections` can map to the same field.
 
 Fields tagged with `json:"-"`, `env:"-"`, `zenith:"-"`, or `mapstructure:"-"` are ignored.
+
+Defaults and required values can be declared on fields:
+
+```go
+type Config struct {
+	Name string `json:"name" required:"true"`
+	Port int    `json:"port" default:"8080"`
+	Mode string `json:"mode" validate:"required"`
+}
+```
+
+Required fields can be written as `required:"true"`, `validate:"required"`, or as an option in the `zenith` tag. Defaults are applied only when the field is missing from the decoded config.
+
+For full config validation, implement `Validate() error` on the target struct:
+
+```go
+func (c *Config) Validate() error {
+	if c.Port <= 0 {
+		return fmt.Errorf("port must be positive")
+	}
+	return nil
+}
+```
+
+Mapping errors include nested paths, for example `database.max_connections`.
 
 ## Supported Formats
 

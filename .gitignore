@@ -7,8 +7,8 @@ dist/
 *.out
 
 # Coverage
-coverage.out
-coverage.html
+./coverage.out
+./coverage.html
 
 # Local/editor files
 .DS_Store
