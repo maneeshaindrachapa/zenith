@@ -1,1 +1,21 @@
-./coverage.out
+# Go build outputs
+bin/
+dist/
+*.exe
+*.test
+*.out
+
+# Coverage
+coverage.out
+coverage.html
+
+# Local/editor files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Temporary files
+tmp/
+*.tmp
