@@ -2,7 +2,7 @@
 
 Zenith is a small Go configuration loader. It reads a config file, selects the correct decoder from the file extension, decodes the file into key-value data, and maps those values into a struct.
 
-The package currently supports JSON and dotenv files through the default registry.
+The package currently supports JSON, dotenv, YAML, and TOML files through the default registry.
 
 ## Installation
 
@@ -115,8 +115,11 @@ Default registered formats:
 - `json`
 - `dotenv`
 - `env`
+- `yaml`
+- `yml`
+- `toml`
 
-TOML and YAML adapter directories exist, but they are not complete or registered yet.
+YAML and TOML support is intentionally lightweight. It is designed for common configuration files with scalar values, arrays, and nested objects.
 
 You can inspect the current registry:
 
@@ -169,8 +172,8 @@ flowchart TD
 
     ENC --> JSONC["codec/json"]
     ENC --> ENVC["codec/dotenv"]
-    ENC -.not yet registered.-> TOMLC["codec/toml"]
-    ENC -.not yet registered.-> YAMLC["codec/yaml"]
+    ENC --> TOMLC["codec/toml"]
+    ENC --> YAMLC["codec/yaml"]
 ```
 
 ### Layers

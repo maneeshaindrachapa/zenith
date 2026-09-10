@@ -7,6 +7,8 @@ import (
 
 	"github.com/maneeshaindrachapa/zenith/internal/adapters/codec/dotenv"
 	zenith_json "github.com/maneeshaindrachapa/zenith/internal/adapters/codec/json"
+	"github.com/maneeshaindrachapa/zenith/internal/adapters/codec/toml"
+	"github.com/maneeshaindrachapa/zenith/internal/adapters/codec/yaml"
 	"github.com/maneeshaindrachapa/zenith/internal/ports"
 )
 
@@ -23,6 +25,9 @@ var codecs = map[string]Codec{
 	"dotenv": dotenv.Endec{},
 	"env":    dotenv.Endec{},
 	"json":   zenith_json.Endec{},
+	"toml":   toml.Endec{},
+	"yaml":   yaml.Endec{},
+	"yml":    yaml.Endec{},
 }
 
 // DefaultRegistry returns the registry used by the package-level helpers.

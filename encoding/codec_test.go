@@ -62,13 +62,13 @@ func TestRegisterErrors(t *testing.T) {
 }
 
 func TestCodecForUnknownFormat(t *testing.T) {
-	if _, err := CodecFor("yaml"); err == nil {
+	if _, err := CodecFor("xml"); err == nil {
 		t.Fatal("CodecFor() with unknown format returned nil error")
 	}
 }
 
 func TestRegisteredFormats(t *testing.T) {
-	want := []string{"dotenv", "env", "json"}
+	want := []string{"dotenv", "env", "json", "toml", "yaml", "yml"}
 	if got := RegisteredFormats(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("RegisteredFormats() = %#v, want %#v", got, want)
 	}

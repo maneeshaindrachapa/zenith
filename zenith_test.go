@@ -86,13 +86,81 @@ func TestLoadDotenvFileIntoStruct(t *testing.T) {
 	}
 }
 
+func TestLoadYAMLFileIntoStruct(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := []byte(`
+name: "Zenith"
+port: 8080
+enabled: true
+timeout: "5s"
+hosts: ["localhost", "example.com"]
+database:
+  host: "db.local"
+  max_connections: 10
+`)
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatalf("WriteFile() returned error: %v", err)
+	}
+
+	var got appConfig
+	if err := Load(path, &got); err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+
+	assertAppConfig(t, got)
+}
+
+func TestLoadTOMLFileIntoStruct(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	content := []byte(`
+name = "Zenith"
+port = 8080
+enabled = true
+timeout = "5s"
+hosts = ["localhost", "example.com"]
+
+[database]
+host = "db.local"
+max_connections = 10
+`)
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatalf("WriteFile() returned error: %v", err)
+	}
+
+	var got appConfig
+	if err := Load(path, &got); err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+
+	assertAppConfig(t, got)
+}
+
 func TestDecodeErrors(t *testing.T) {
 	var got appConfig
-	if err := Decode([]byte("{}"), "yaml", &got); err == nil {
+	if err := Decode([]byte("{}"), "xml", &got); err == nil {
 		t.Fatal("Decode() with unregistered format returned nil error")
 	}
 	if err := Decode([]byte("{}"), "json", got); err == nil {
 		t.Fatal("Decode() with non-pointer target returned nil error")
+	}
+}
+
+func assertAppConfig(t *testing.T, got appConfig) {
+	t.Helper()
+
+	want := appConfig{
+		Name:    "Zenith",
+		Port:    8080,
+		Enabled: true,
+		Timeout: 5 * time.Second,
+		Hosts:   []string{"localhost", "example.com"},
+		Database: databaseConfig{
+			Host: "db.local",
+			Max:  10,
+		},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("config = %#v, want %#v", got, want)
 	}
 }
 
