@@ -1,5 +1,5 @@
 GO ?= go
-GOCACHE ?= /private/tmp/zenith-go-build
+GOCACHE ?= $(CURDIR)/.cache/go-build
 COVERAGE_PROFILE ?= coverage.out
 COVERPKG ?= ./...
 
