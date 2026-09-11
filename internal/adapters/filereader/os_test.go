@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	zenitherrors "github.com/maneeshaindrachapa/zenith/internal/errors"
 )
 
 func TestOSReadFile(t *testing.T) {
@@ -30,5 +32,12 @@ func TestOSReadFileMissingFile(t *testing.T) {
 	}
 	if !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("ReadFile() error = %v, want os.ErrNotExist", err)
+	}
+	if !errors.Is(err, zenitherrors.ErrReadFile) {
+		t.Fatalf("ReadFile() error = %v, want ErrReadFile", err)
+	}
+	var configErr *zenitherrors.ConfigError
+	if !errors.As(err, &configErr) {
+		t.Fatalf("ReadFile() error = %v, want ConfigError", err)
 	}
 }

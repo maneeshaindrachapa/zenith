@@ -2,7 +2,8 @@ package json
 
 import (
 	"encoding/json"
-	"fmt"
+
+	zenitherrors "github.com/maneeshaindrachapa/zenith/internal/errors"
 )
 
 // Endec encodes and decodes JSON objects.
@@ -13,7 +14,7 @@ func (Endec) Encode(v map[string]any) ([]byte, error) {
 	res, err := json.MarshalIndent(v, "", " ")
 	if err != nil {
 		// Wrap the original error while preserving it for errors.Is/errors.As.
-		return nil, fmt.Errorf("encode JSON: %w", err)
+		return nil, zenitherrors.Wrap(zenitherrors.ErrEncode, "encode JSON", err)
 	}
 	return res, nil
 }
@@ -22,12 +23,12 @@ func (Endec) Encode(v map[string]any) ([]byte, error) {
 func (Endec) Decode(b []byte, v *map[string]any) error {
 	if v == nil {
 		// A pointer is required so Decode can update the caller's map.
-		return fmt.Errorf("decode JSON: destination map pointer is nil")
+		return &zenitherrors.ConfigError{Kind: zenitherrors.ErrDecode, Operation: "decode JSON", Reason: "destination map pointer is nil"}
 	}
 
 	if err := json.Unmarshal(b, v); err != nil {
 		// Include context while retaining the underlying JSON syntax error.
-		return fmt.Errorf("decode JSON: %w", err)
+		return zenitherrors.Wrap(zenitherrors.ErrDecode, "decode JSON", err)
 	}
 
 	return nil

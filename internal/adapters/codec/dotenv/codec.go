@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	zenitherrors "github.com/maneeshaindrachapa/zenith/internal/errors"
 )
 
 // Endec encodes and decodes dotenv key-value data.
@@ -17,7 +19,7 @@ func (Endec) Encode(v map[string]any) ([]byte, error) {
 	keys := make([]string, 0, len(v))
 	for key := range v {
 		if !validKey(key) {
-			return nil, fmt.Errorf("encode dotenv: invalid key %q", key)
+			return nil, &zenitherrors.ConfigError{Kind: zenitherrors.ErrEncode, Operation: "encode dotenv", Path: key, Reason: "invalid key"}
 		}
 		keys = append(keys, key)
 	}
@@ -27,7 +29,7 @@ func (Endec) Encode(v map[string]any) ([]byte, error) {
 	for _, key := range keys {
 		value, ok := v[key].(string)
 		if !ok {
-			return nil, fmt.Errorf("encode dotenv: value for %q must be a string", key)
+			return nil, &zenitherrors.ConfigError{Kind: zenitherrors.ErrEncode, Operation: "encode dotenv", Path: key, Reason: "value must be a string"}
 		}
 
 		// Quote values so spaces, # characters, and newlines are preserved.
@@ -41,7 +43,7 @@ func (Endec) Encode(v map[string]any) ([]byte, error) {
 func (Endec) Decode(data []byte, v *map[string]any) error {
 	if v == nil {
 		// A pointer is required so Decode can initialize the caller's map.
-		return fmt.Errorf("decode dotenv: destination map pointer is nil")
+		return &zenitherrors.ConfigError{Kind: zenitherrors.ErrDecode, Operation: "decode dotenv", Reason: "destination map pointer is nil"}
 	}
 	if *v == nil {
 		*v = make(map[string]any)
@@ -58,14 +60,14 @@ func (Endec) Decode(data []byte, v *map[string]any) error {
 		key, value, found := strings.Cut(line, "=")
 		key = strings.TrimSpace(key)
 		if !found || !validKey(key) {
-			return fmt.Errorf("decode dotenv: invalid line %d", lineNumber)
+			return &zenitherrors.ConfigError{Kind: zenitherrors.ErrDecode, Operation: "decode dotenv", Reason: fmt.Sprintf("invalid line %d", lineNumber)}
 		}
 
 		value = strings.TrimSpace(value)
 		if len(value) > 1 && value[0] == '"' {
 			decoded, err := strconv.Unquote(value)
 			if err != nil {
-				return fmt.Errorf("decode dotenv: invalid quoted value on line %d: %w", lineNumber, err)
+				return &zenitherrors.ConfigError{Kind: zenitherrors.ErrDecode, Operation: "decode dotenv", Reason: fmt.Sprintf("invalid quoted value on line %d", lineNumber), CauseErr: err}
 			}
 			value = decoded
 		}
@@ -73,7 +75,7 @@ func (Endec) Decode(data []byte, v *map[string]any) error {
 	}
 
 	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("decode dotenv: %w", err)
+		return zenitherrors.Wrap(zenitherrors.ErrDecode, "decode dotenv", err)
 	}
 	return nil
 }

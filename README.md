@@ -148,6 +148,39 @@ func (c *Config) Validate() error {
 
 Mapping errors include nested paths, for example `database.max_connections`.
 
+### Error Handling
+
+Zenith wraps package-originated failures with one structured error type, `ConfigError`, plus sentinel kinds so callers can use `errors.Is` and `errors.As`. Lower-level causes are preserved:
+
+```go
+err := zenith.Load("config.xml", &cfg)
+if errors.Is(err, zenith.ErrUnsupportedFormat) {
+	// no decoder is registered for this format
+}
+```
+
+Strict mapping returns `ErrUnknownField` with the rejected field path:
+
+```go
+err := zenith.Load("config.json", &cfg, zenith.WithStrictMapping())
+
+var configErr *zenith.ConfigError
+if errors.As(err, &configErr) {
+	log.Println(configErr.Path)
+}
+```
+
+Required fields return `ErrRequiredField`:
+
+```go
+var reasoned zenith.Reasoned
+if errors.As(err, &reasoned) {
+	log.Println(reasoned.ErrorReason())
+}
+```
+
+When an underlying library or filesystem operation fails, `ConfigError.Cause()` returns that lower-level error.
+
 ## Supported Formats
 
 Default registered formats:

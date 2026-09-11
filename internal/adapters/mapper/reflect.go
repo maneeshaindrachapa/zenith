@@ -2,12 +2,15 @@ package mapper
 
 import (
 	"encoding"
+	stderrors "errors"
 	"fmt"
 	"reflect"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	zenitherrors "github.com/maneeshaindrachapa/zenith/internal/errors"
 )
 
 var (
@@ -33,17 +36,17 @@ type Reflect struct {
 // MapToStruct copies values from data into the struct pointed to by target.
 func (mapper Reflect) MapToStruct(data map[string]any, target any) error {
 	if target == nil {
-		return fmt.Errorf("map to struct: target is nil")
+		return zenitherrors.NewInvalidTarget("target is nil")
 	}
 
 	targetValue := reflect.ValueOf(target)
 	if targetValue.Kind() != reflect.Pointer || targetValue.IsNil() {
-		return fmt.Errorf("map to struct: target must be a non-nil pointer to a struct")
+		return zenitherrors.NewInvalidTarget("target must be a non-nil pointer to a struct")
 	}
 
 	structValue := targetValue.Elem()
 	if structValue.Kind() != reflect.Struct {
-		return fmt.Errorf("map to struct: target must point to a struct")
+		return zenitherrors.NewInvalidTarget("target must point to a struct")
 	}
 
 	if err := mapper.fillStruct(data, structValue, ""); err != nil {
@@ -52,7 +55,7 @@ func (mapper Reflect) MapToStruct(data map[string]any, target any) error {
 
 	if targetValidator, ok := target.(validator); ok {
 		if err := targetValidator.Validate(); err != nil {
-			return fmt.Errorf("validate config: %w", err)
+			return &zenitherrors.ConfigError{Kind: zenitherrors.ErrValidation, Operation: "validate config", CauseErr: err}
 		}
 	}
 
@@ -85,12 +88,12 @@ func (mapper Reflect) fillStruct(data map[string]any, structValue reflect.Value,
 			defaultValue, hasDefault := fieldType.Tag.Lookup("default")
 			if hasDefault {
 				if err := mapper.assignValue(fieldValue, defaultValue, fieldPath); err != nil {
-					return fmt.Errorf("map field %s: %w", fieldPath, err)
+					return withPath(err, fieldPath)
 				}
 				continue
 			}
 			if fieldRequired(fieldType) {
-				return fmt.Errorf("map field %s: required value is missing", fieldPath)
+				return zenitherrors.NewRequiredField(fieldPath, "missing")
 			}
 			continue
 		}
@@ -98,23 +101,23 @@ func (mapper Reflect) fillStruct(data map[string]any, structValue reflect.Value,
 
 		if mapper.Options.PreserveExistingOnEmpty && isEmptyString(item.value) {
 			if fieldRequired(fieldType) {
-				return fmt.Errorf("map field %s: required value is empty", fieldPath)
+				return zenitherrors.NewRequiredField(fieldPath, "empty")
 			}
 			continue
 		}
 		if fieldRequired(fieldType) && isEmptyString(item.value) {
-			return fmt.Errorf("map field %s: required value is empty", fieldPath)
+			return zenitherrors.NewRequiredField(fieldPath, "empty")
 		}
 
 		if err := mapper.assignValue(fieldValue, item.value, fieldPath); err != nil {
-			return fmt.Errorf("map field %s: %w", fieldPath, err)
+			return withPath(err, fieldPath)
 		}
 	}
 
 	if mapper.Options.Strict {
 		unknown := unknownKeys(values, used, path)
 		if len(unknown) > 0 {
-			return fmt.Errorf("map to struct: unknown field %s", unknown[0])
+			return zenitherrors.NewUnknownField(unknown[0])
 		}
 	}
 
@@ -204,6 +207,18 @@ func isEmptyString(value any) bool {
 	return ok && text == ""
 }
 
+func withPath(err error, path string) error {
+	var configErr *zenitherrors.ConfigError
+	if stderrors.As(err, &configErr) {
+		if configErr.Path == "" {
+			configErr.Path = path
+			configErr.Operation = "map field"
+		}
+		return configErr
+	}
+	return &zenitherrors.ConfigError{Kind: zenitherrors.ErrInvalidValue, Operation: "map field", Path: path, CauseErr: err}
+}
+
 func (mapper Reflect) assignValue(target reflect.Value, value any, path string) error {
 	if !target.CanSet() {
 		return nil
@@ -224,7 +239,10 @@ func (mapper Reflect) assignValue(target reflect.Value, value any, path string) 
 		if !ok {
 			text = fmt.Sprint(value)
 		}
-		return target.Addr().Interface().(encoding.TextUnmarshaler).UnmarshalText([]byte(text))
+		if err := target.Addr().Interface().(encoding.TextUnmarshaler).UnmarshalText([]byte(text)); err != nil {
+			return &zenitherrors.ConfigError{Kind: zenitherrors.ErrInvalidValue, Path: path, CauseErr: err}
+		}
+		return nil
 	}
 
 	if target.Type() == durationType {
@@ -250,7 +268,7 @@ func (mapper Reflect) assignValue(target reflect.Value, value any, path string) 
 	case reflect.Struct:
 		nested, ok := value.(map[string]any)
 		if !ok {
-			return fmt.Errorf("expected object, got %T", value)
+			return zenitherrors.NewInvalidValue(path, fmt.Sprintf("expected object, got %T", value))
 		}
 		return mapper.fillStruct(nested, target, path)
 	case reflect.Slice:
@@ -282,7 +300,7 @@ func (mapper Reflect) assignValue(target reflect.Value, value any, path string) 
 		}
 		target.SetFloat(floatValue)
 	default:
-		return fmt.Errorf("unsupported target type %s", target.Type())
+		return zenitherrors.NewInvalidValue(path, fmt.Sprintf("unsupported target type %s", target.Type()))
 	}
 
 	return nil
@@ -311,13 +329,13 @@ func isScalarKind(kind reflect.Kind) bool {
 func (mapper Reflect) assignSlice(target reflect.Value, value any, path string) error {
 	source := reflect.ValueOf(value)
 	if !source.IsValid() || source.Kind() != reflect.Slice {
-		return fmt.Errorf("expected slice, got %T", value)
+		return zenitherrors.NewInvalidValue(path, fmt.Sprintf("expected slice, got %T", value))
 	}
 
 	result := reflect.MakeSlice(target.Type(), source.Len(), source.Len())
 	for i := 0; i < source.Len(); i++ {
 		if err := mapper.assignValue(result.Index(i), source.Index(i).Interface(), fmt.Sprintf("%s[%d]", path, i)); err != nil {
-			return fmt.Errorf("index %d: %w", i, err)
+			return &zenitherrors.ConfigError{Kind: zenitherrors.ErrInvalidValue, Operation: "map slice", Path: fmt.Sprintf("%s[%d]", path, i), CauseErr: err}
 		}
 	}
 	target.Set(result)
@@ -331,11 +349,11 @@ func toBool(value any) (bool, error) {
 	case string:
 		res, err := strconv.ParseBool(strings.TrimSpace(v))
 		if err != nil {
-			return false, fmt.Errorf("expected bool, got %q", v)
+			return false, zenitherrors.NewInvalidValue("", fmt.Sprintf("expected bool, got %q", v))
 		}
 		return res, nil
 	default:
-		return false, fmt.Errorf("expected bool, got %T", value)
+		return false, zenitherrors.NewInvalidValue("", fmt.Sprintf("expected bool, got %T", value))
 	}
 }
 
@@ -353,17 +371,17 @@ func toInt(value any, bits int) (int64, error) {
 		return v, nil
 	case float64:
 		if v != float64(int64(v)) {
-			return 0, fmt.Errorf("expected integer, got %v", v)
+			return 0, zenitherrors.NewInvalidValue("", fmt.Sprintf("expected integer, got %v", v))
 		}
 		return int64(v), nil
 	case string:
 		res, err := strconv.ParseInt(strings.TrimSpace(v), 10, bits)
 		if err != nil {
-			return 0, fmt.Errorf("expected integer, got %q", v)
+			return 0, zenitherrors.NewInvalidValue("", fmt.Sprintf("expected integer, got %q", v))
 		}
 		return res, nil
 	default:
-		return 0, fmt.Errorf("expected integer, got %T", value)
+		return 0, zenitherrors.NewInvalidValue("", fmt.Sprintf("expected integer, got %T", value))
 	}
 }
 
@@ -381,17 +399,17 @@ func toUint(value any, bits int) (uint64, error) {
 		return v, nil
 	case float64:
 		if v < 0 || v != float64(uint64(v)) {
-			return 0, fmt.Errorf("expected unsigned integer, got %v", v)
+			return 0, zenitherrors.NewInvalidValue("", fmt.Sprintf("expected unsigned integer, got %v", v))
 		}
 		return uint64(v), nil
 	case string:
 		res, err := strconv.ParseUint(strings.TrimSpace(v), 10, bits)
 		if err != nil {
-			return 0, fmt.Errorf("expected unsigned integer, got %q", v)
+			return 0, zenitherrors.NewInvalidValue("", fmt.Sprintf("expected unsigned integer, got %q", v))
 		}
 		return res, nil
 	default:
-		return 0, fmt.Errorf("expected unsigned integer, got %T", value)
+		return 0, zenitherrors.NewInvalidValue("", fmt.Sprintf("expected unsigned integer, got %T", value))
 	}
 }
 
@@ -408,11 +426,11 @@ func toFloat(value any, bits int) (float64, error) {
 	case string:
 		res, err := strconv.ParseFloat(strings.TrimSpace(v), bits)
 		if err != nil {
-			return 0, fmt.Errorf("expected float, got %q", v)
+			return 0, zenitherrors.NewInvalidValue("", fmt.Sprintf("expected float, got %q", v))
 		}
 		return res, nil
 	default:
-		return 0, fmt.Errorf("expected float, got %T", value)
+		return 0, zenitherrors.NewInvalidValue("", fmt.Sprintf("expected float, got %T", value))
 	}
 }
 
@@ -423,7 +441,7 @@ func toDuration(value any) (time.Duration, error) {
 	case string:
 		res, err := time.ParseDuration(strings.TrimSpace(v))
 		if err != nil {
-			return 0, fmt.Errorf("expected duration, got %q", v)
+			return 0, zenitherrors.NewInvalidValue("", fmt.Sprintf("expected duration, got %q", v))
 		}
 		return res, nil
 	default:

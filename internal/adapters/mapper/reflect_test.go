@@ -1,11 +1,14 @@
 package mapper
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	zenitherrors "github.com/maneeshaindrachapa/zenith/internal/errors"
 )
 
 type reflectConfig struct {
@@ -218,6 +221,16 @@ func TestReflectStrictModeRejectsUnknownFields(t *testing.T) {
 	if err == nil {
 		t.Fatal("MapToStruct() returned nil error")
 	}
+	if !errors.Is(err, zenitherrors.ErrUnknownField) {
+		t.Fatalf("MapToStruct() error = %v, want ErrUnknownField", err)
+	}
+	var fieldErr *zenitherrors.ConfigError
+	if !errors.As(err, &fieldErr) {
+		t.Fatalf("MapToStruct() error = %v, want ConfigError", err)
+	}
+	if fieldErr.Path != "database.unknown" {
+		t.Fatalf("ConfigError.Path = %q, want %q", fieldErr.Path, "database.unknown")
+	}
 	if !strings.Contains(err.Error(), "database.unknown") {
 		t.Fatalf("MapToStruct() error = %q, want database.unknown", err)
 	}
@@ -254,6 +267,16 @@ func TestReflectRequiredFieldErrorsUsePaths(t *testing.T) {
 
 	if err == nil {
 		t.Fatal("MapToStruct() returned nil error")
+	}
+	if !errors.Is(err, zenitherrors.ErrRequiredField) {
+		t.Fatalf("MapToStruct() error = %v, want ErrRequiredField", err)
+	}
+	var fieldErr *zenitherrors.ConfigError
+	if !errors.As(err, &fieldErr) {
+		t.Fatalf("MapToStruct() error = %v, want ConfigError", err)
+	}
+	if fieldErr.Path != "database.host" {
+		t.Fatalf("ConfigError.Path = %q, want %q", fieldErr.Path, "database.host")
 	}
 	if !strings.Contains(err.Error(), "database.host") {
 		t.Fatalf("MapToStruct() error = %q, want database.host", err)

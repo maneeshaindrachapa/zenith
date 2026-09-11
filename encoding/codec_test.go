@@ -1,6 +1,7 @@
 package encoding
 
 import (
+	"errors"
 	"reflect"
 	"testing"
 )
@@ -55,15 +56,31 @@ func TestRegister(t *testing.T) {
 func TestRegisterErrors(t *testing.T) {
 	if err := Register("", testCodec{}); err == nil {
 		t.Fatal("Register() with empty format returned nil error")
+	} else if !errors.Is(err, ErrRegistry) {
+		t.Fatalf("Register() error = %v, want ErrRegistry", err)
 	}
+
 	if err := Register("bad", nil); err == nil {
 		t.Fatal("Register() with nil codec returned nil error")
+	} else if !errors.Is(err, ErrRegistry) {
+		t.Fatalf("Register() error = %v, want ErrRegistry", err)
 	}
 }
 
 func TestCodecForUnknownFormat(t *testing.T) {
-	if _, err := CodecFor("xml"); err == nil {
+	_, err := CodecFor("xml")
+	if err == nil {
 		t.Fatal("CodecFor() with unknown format returned nil error")
+	}
+	if !errors.Is(err, ErrUnsupportedFormat) {
+		t.Fatalf("CodecFor() error = %v, want ErrUnsupportedFormat", err)
+	}
+	var formatErr *ConfigError
+	if !errors.As(err, &formatErr) {
+		t.Fatalf("CodecFor() error = %v, want ConfigError", err)
+	}
+	if formatErr.Format != "xml" {
+		t.Fatalf("ConfigError.Format = %q, want %q", formatErr.Format, "xml")
 	}
 }
 

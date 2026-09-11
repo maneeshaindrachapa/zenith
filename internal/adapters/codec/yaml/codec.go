@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	zenitherrors "github.com/maneeshaindrachapa/zenith/internal/errors"
 )
 
 // Endec encodes and decodes simple YAML mapping data.
@@ -23,7 +25,7 @@ func (Endec) Encode(v map[string]any) ([]byte, error) {
 // Decode parses simple YAML mapping data into the map pointed to by v.
 func (Endec) Decode(data []byte, v *map[string]any) error {
 	if v == nil {
-		return fmt.Errorf("decode YAML: destination map pointer is nil")
+		return &zenitherrors.ConfigError{Kind: zenitherrors.ErrDecode, Operation: "decode YAML", Reason: "destination map pointer is nil"}
 	}
 	if *v == nil {
 		*v = make(map[string]any)
@@ -45,7 +47,7 @@ func (Endec) Decode(data []byte, v *map[string]any) error {
 
 		indent := countIndent(raw)
 		if indent%2 != 0 {
-			return fmt.Errorf("decode YAML: invalid indentation on line %d", lineNumber)
+			return &zenitherrors.ConfigError{Kind: zenitherrors.ErrDecode, Operation: "decode YAML", Reason: fmt.Sprintf("invalid indentation on line %d", lineNumber)}
 		}
 
 		for len(stack) > 1 && indent <= stack[len(stack)-1].indent {
@@ -56,7 +58,7 @@ func (Endec) Decode(data []byte, v *map[string]any) error {
 		key = strings.TrimSpace(key)
 		rawValue = strings.TrimSpace(rawValue)
 		if !found || key == "" {
-			return fmt.Errorf("decode YAML: invalid line %d", lineNumber)
+			return &zenitherrors.ConfigError{Kind: zenitherrors.ErrDecode, Operation: "decode YAML", Reason: fmt.Sprintf("invalid line %d", lineNumber)}
 		}
 
 		current := stack[len(stack)-1].values
@@ -69,13 +71,13 @@ func (Endec) Decode(data []byte, v *map[string]any) error {
 
 		value, err := parseValue(rawValue)
 		if err != nil {
-			return fmt.Errorf("decode YAML line %d: %w", lineNumber, err)
+			return &zenitherrors.ConfigError{Kind: zenitherrors.ErrDecode, Operation: "decode YAML", Path: key, Reason: fmt.Sprintf("line %d", lineNumber), CauseErr: err}
 		}
 		current[key] = value
 	}
 
 	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("decode YAML: %w", err)
+		return zenitherrors.Wrap(zenitherrors.ErrDecode, "decode YAML", err)
 	}
 	return nil
 }
@@ -87,14 +89,14 @@ func encodeMap(output *strings.Builder, values map[string]any, indent int) error
 		if nested, ok := value.(map[string]any); ok {
 			fmt.Fprintf(output, "%s%s:\n", prefix, key)
 			if err := encodeMap(output, nested, indent+2); err != nil {
-				return err
+				return &zenitherrors.ConfigError{Kind: zenitherrors.ErrEncode, Operation: "encode YAML", Path: key, CauseErr: err}
 			}
 			continue
 		}
 
 		encoded, err := encodeValue(value)
 		if err != nil {
-			return fmt.Errorf("encode YAML key %q: %w", key, err)
+			return &zenitherrors.ConfigError{Kind: zenitherrors.ErrEncode, Operation: "encode YAML", Path: key, CauseErr: err}
 		}
 		fmt.Fprintf(output, "%s%s: %s\n", prefix, key, encoded)
 	}
@@ -135,7 +137,7 @@ func encodeValue(value any) (string, error) {
 		}
 		return encodeArray(values)
 	default:
-		return "", fmt.Errorf("unsupported value type %T", value)
+		return "", &zenitherrors.ConfigError{Kind: zenitherrors.ErrInvalidValue, Reason: fmt.Sprintf("unsupported value type %T", value)}
 	}
 }
 
@@ -153,12 +155,12 @@ func encodeArray(values []any) (string, error) {
 
 func parseValue(value string) (any, error) {
 	if value == "" {
-		return nil, fmt.Errorf("missing value")
+		return nil, &zenitherrors.ConfigError{Kind: zenitherrors.ErrInvalidValue, Reason: "missing value"}
 	}
 	if strings.HasPrefix(value, `"`) {
 		decoded, err := strconv.Unquote(value)
 		if err != nil {
-			return nil, fmt.Errorf("invalid quoted string: %w", err)
+			return nil, &zenitherrors.ConfigError{Kind: zenitherrors.ErrInvalidValue, Reason: "invalid quoted string", CauseErr: err}
 		}
 		return decoded, nil
 	}

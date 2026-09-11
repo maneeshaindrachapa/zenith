@@ -1,6 +1,7 @@
 package zenith
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -139,9 +140,40 @@ func TestDecodeErrors(t *testing.T) {
 	var got appConfig
 	if err := Decode([]byte("{}"), "xml", &got); err == nil {
 		t.Fatal("Decode() with unregistered format returned nil error")
+	} else {
+		if !errors.Is(err, ErrUnsupportedFormat) {
+			t.Fatalf("Decode() error = %v, want ErrUnsupportedFormat", err)
+		}
+		var formatErr *ConfigError
+		if !errors.As(err, &formatErr) {
+			t.Fatalf("Decode() error = %v, want ConfigError", err)
+		}
+		if formatErr.Format != "xml" {
+			t.Fatalf("ConfigError.Format = %q, want %q", formatErr.Format, "xml")
+		}
 	}
 	if err := Decode([]byte("{}"), "json", got); err == nil {
 		t.Fatal("Decode() with non-pointer target returned nil error")
+	} else if !errors.Is(err, ErrInvalidTarget) {
+		t.Fatalf("Decode() error = %v, want ErrInvalidTarget", err)
+	}
+}
+
+func TestDecodeInvalidDataError(t *testing.T) {
+	var got appConfig
+	err := Decode([]byte(`{"invalid"}`), "json", &got)
+	if err == nil {
+		t.Fatal("Decode() returned nil error")
+	}
+	if !errors.Is(err, ErrDecode) {
+		t.Fatalf("Decode() error = %v, want ErrDecode", err)
+	}
+	var configErr *ConfigError
+	if !errors.As(err, &configErr) {
+		t.Fatalf("Decode() error = %v, want ConfigError", err)
+	}
+	if configErr.Cause() == nil {
+		t.Fatal("ConfigError.Cause() = nil, want JSON syntax cause")
 	}
 }
 
@@ -173,6 +205,53 @@ func TestDecodeWithStrictMapping(t *testing.T) {
 	if err == nil {
 		t.Fatal("Decode() returned nil error")
 	}
+	if !errors.Is(err, ErrUnknownField) {
+		t.Fatalf("Decode() error = %v, want ErrUnknownField", err)
+	}
+	var fieldErr *ConfigError
+	if !errors.As(err, &fieldErr) {
+		t.Fatalf("Decode() error = %v, want ConfigError", err)
+	}
+	if fieldErr.Path != "unknown" {
+		t.Fatalf("ConfigError.Path = %q, want %q", fieldErr.Path, "unknown")
+	}
+
+	var pathed FieldPathed
+	if !errors.As(err, &pathed) {
+		t.Fatalf("Decode() error = %v, want FieldPathed", err)
+	}
+	if pathed.FieldPath() != "unknown" {
+		t.Fatalf("FieldPath() = %q, want %q", pathed.FieldPath(), "unknown")
+	}
+}
+
+func TestDecodeRequiredFieldError(t *testing.T) {
+	var got struct {
+		Name string `json:"name" required:"true"`
+	}
+
+	err := Decode([]byte(`{}`), "json", &got)
+	if err == nil {
+		t.Fatal("Decode() returned nil error")
+	}
+	if !errors.Is(err, ErrRequiredField) {
+		t.Fatalf("Decode() error = %v, want ErrRequiredField", err)
+	}
+	var fieldErr *ConfigError
+	if !errors.As(err, &fieldErr) {
+		t.Fatalf("Decode() error = %v, want ConfigError", err)
+	}
+	if fieldErr.Path != "name" {
+		t.Fatalf("ConfigError.Path = %q, want %q", fieldErr.Path, "name")
+	}
+
+	var reasoned Reasoned
+	if !errors.As(err, &reasoned) {
+		t.Fatalf("Decode() error = %v, want Reasoned", err)
+	}
+	if reasoned.ErrorReason() != "missing" {
+		t.Fatalf("ErrorReason() = %q, want %q", reasoned.ErrorReason(), "missing")
+	}
 }
 
 func TestDecodeWithPreserveExistingOnEmpty(t *testing.T) {
@@ -192,8 +271,13 @@ func TestDecodeWithPreserveExistingOnEmpty(t *testing.T) {
 func TestLoadErrors(t *testing.T) {
 	if err := Load(filepath.Join(t.TempDir(), "config"), &appConfig{}); err == nil {
 		t.Fatal("Load() without extension returned nil error")
+	} else if !errors.Is(err, ErrMissingExtension) {
+		t.Fatalf("Load() error = %v, want ErrMissingExtension", err)
 	}
+
 	if err := Load(filepath.Join(t.TempDir(), "missing.json"), &appConfig{}); err == nil {
 		t.Fatal("Load() with missing file returned nil error")
+	} else if !errors.Is(err, ErrReadFile) {
+		t.Fatalf("Load() error = %v, want ErrReadFile", err)
 	}
 }

@@ -1,7 +1,6 @@
 package encoding
 
 import (
-	"fmt"
 	"sort"
 	"strings"
 
@@ -9,6 +8,7 @@ import (
 	zenith_json "github.com/maneeshaindrachapa/zenith/internal/adapters/codec/json"
 	"github.com/maneeshaindrachapa/zenith/internal/adapters/codec/toml"
 	"github.com/maneeshaindrachapa/zenith/internal/adapters/codec/yaml"
+	zenitherrors "github.com/maneeshaindrachapa/zenith/internal/errors"
 	"github.com/maneeshaindrachapa/zenith/internal/ports"
 )
 
@@ -19,6 +19,17 @@ type Decoder = ports.Decoder
 type Codec = ports.Codec
 
 type Registry struct{}
+
+var (
+	// ErrUnsupportedFormat reports that no codec is registered for a format.
+	ErrUnsupportedFormat = zenitherrors.ErrUnsupportedFormat
+
+	// ErrRegistry reports invalid codec registry usage.
+	ErrRegistry = zenitherrors.ErrRegistry
+)
+
+// ConfigError describes structured Zenith configuration errors.
+type ConfigError = zenitherrors.ConfigError
 
 // codecs stores the built-in and user-registered codecs by normalized format.
 var codecs = map[string]Codec{
@@ -44,10 +55,10 @@ func Register(format string, codec Codec) error {
 func (Registry) Register(format string, codec Codec) error {
 	name := normalizeFormat(format)
 	if name == "" {
-		return fmt.Errorf("register codec: format is required")
+		return &zenitherrors.ConfigError{Kind: zenitherrors.ErrRegistry, Operation: "register codec", Reason: "format is required"}
 	}
 	if codec == nil {
-		return fmt.Errorf("register codec %q: codec is nil", name)
+		return &zenitherrors.ConfigError{Kind: zenitherrors.ErrRegistry, Operation: "register codec", Format: name, Reason: "codec is nil"}
 	}
 
 	codecs[name] = codec
@@ -64,7 +75,7 @@ func (Registry) CodecFor(format string) (Codec, error) {
 	name := normalizeFormat(format)
 	codec, ok := codecs[name]
 	if !ok {
-		return nil, fmt.Errorf("codec for %q is not registered", format)
+		return nil, zenitherrors.NewUnsupportedFormat(format)
 	}
 	return codec, nil
 }

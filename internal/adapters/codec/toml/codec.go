@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	zenitherrors "github.com/maneeshaindrachapa/zenith/internal/errors"
 )
 
 type Endec struct{}
@@ -23,7 +25,7 @@ func (Endec) Encode(v map[string]any) ([]byte, error) {
 
 		encoded, err := encodeValue(value)
 		if err != nil {
-			return nil, fmt.Errorf("encode TOML key %q: %w", key, err)
+			return nil, &zenitherrors.ConfigError{Kind: zenitherrors.ErrEncode, Operation: "encode TOML", Path: key, CauseErr: err}
 		}
 		fmt.Fprintf(&output, "%s = %s\n", key, encoded)
 	}
@@ -41,7 +43,7 @@ func (Endec) Encode(v map[string]any) ([]byte, error) {
 		for _, nestedKey := range sortedKeys(nested) {
 			encoded, err := encodeValue(nested[nestedKey])
 			if err != nil {
-				return nil, fmt.Errorf("encode TOML key %q.%s: %w", key, nestedKey, err)
+				return nil, &zenitherrors.ConfigError{Kind: zenitherrors.ErrEncode, Operation: "encode TOML", Path: key + "." + nestedKey, CauseErr: err}
 			}
 			fmt.Fprintf(&output, "%s = %s\n", nestedKey, encoded)
 		}
@@ -53,7 +55,7 @@ func (Endec) Encode(v map[string]any) ([]byte, error) {
 // Decode parses simple TOML data into the map pointed to by v.
 func (Endec) Decode(data []byte, v *map[string]any) error {
 	if v == nil {
-		return fmt.Errorf("decode TOML: destination map pointer is nil")
+		return &zenitherrors.ConfigError{Kind: zenitherrors.ErrDecode, Operation: "decode TOML", Reason: "destination map pointer is nil"}
 	}
 	if *v == nil {
 		*v = make(map[string]any)
@@ -70,7 +72,7 @@ func (Endec) Decode(data []byte, v *map[string]any) error {
 		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
 			section := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(line, "["), "]"))
 			if section == "" {
-				return fmt.Errorf("decode TOML: empty section on line %d", lineNumber)
+				return &zenitherrors.ConfigError{Kind: zenitherrors.ErrDecode, Operation: "decode TOML", Reason: fmt.Sprintf("empty section on line %d", lineNumber)}
 			}
 
 			current = ensurePath(*v, strings.Split(section, "."))
@@ -80,18 +82,18 @@ func (Endec) Decode(data []byte, v *map[string]any) error {
 		key, rawValue, found := strings.Cut(line, "=")
 		key = strings.TrimSpace(key)
 		if !found || key == "" {
-			return fmt.Errorf("decode TOML: invalid line %d", lineNumber)
+			return &zenitherrors.ConfigError{Kind: zenitherrors.ErrDecode, Operation: "decode TOML", Reason: fmt.Sprintf("invalid line %d", lineNumber)}
 		}
 
 		value, err := parseValue(strings.TrimSpace(rawValue))
 		if err != nil {
-			return fmt.Errorf("decode TOML line %d: %w", lineNumber, err)
+			return &zenitherrors.ConfigError{Kind: zenitherrors.ErrDecode, Operation: "decode TOML", Path: key, Reason: fmt.Sprintf("line %d", lineNumber), CauseErr: err}
 		}
 		current[key] = value
 	}
 
 	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("decode TOML: %w", err)
+		return zenitherrors.Wrap(zenitherrors.ErrDecode, "decode TOML", err)
 	}
 	return nil
 }
@@ -133,7 +135,7 @@ func encodeValue(value any) (string, error) {
 		}
 		return encodeArray(values)
 	default:
-		return "", fmt.Errorf("unsupported value type %T", value)
+		return "", &zenitherrors.ConfigError{Kind: zenitherrors.ErrInvalidValue, Reason: fmt.Sprintf("unsupported value type %T", value)}
 	}
 }
 
@@ -151,12 +153,12 @@ func encodeArray(values []any) (string, error) {
 
 func parseValue(value string) (any, error) {
 	if value == "" {
-		return nil, fmt.Errorf("missing value")
+		return nil, &zenitherrors.ConfigError{Kind: zenitherrors.ErrInvalidValue, Reason: "missing value"}
 	}
 	if strings.HasPrefix(value, `"`) {
 		decoded, err := strconv.Unquote(value)
 		if err != nil {
-			return nil, fmt.Errorf("invalid quoted string: %w", err)
+			return nil, &zenitherrors.ConfigError{Kind: zenitherrors.ErrInvalidValue, Reason: "invalid quoted string", CauseErr: err}
 		}
 		return decoded, nil
 	}
@@ -172,7 +174,7 @@ func parseValue(value string) (any, error) {
 	if parsed, err := strconv.ParseFloat(value, 64); err == nil {
 		return parsed, nil
 	}
-	return nil, fmt.Errorf("unsupported value %q", value)
+	return nil, &zenitherrors.ConfigError{Kind: zenitherrors.ErrInvalidValue, Reason: fmt.Sprintf("unsupported value %q", value)}
 }
 
 func parseArray(value string) ([]any, error) {
