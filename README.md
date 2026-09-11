@@ -1,5 +1,7 @@
 # Zenith
 
+![Zenith logo](zenith-logo.png)
+
 Zenith is a small Go configuration loader. It reads a config file, selects the correct decoder from the file extension, decodes the file into key-value data, and maps those values into a struct.
 
 The package currently supports JSON, dotenv, YAML, and TOML files through the default registry.
