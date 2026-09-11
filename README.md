@@ -1,6 +1,9 @@
-# Zenith
+<div align="center">
+    <img src="./zenith-logo.png" width="80" alt="Zenith logo">
+    <br>
+    <h1><strong>Zenith</strong></h1>
+</div>
 
-![Zenith logo](zenith-logo.png)
 
 Zenith is a small Go configuration loader. It reads a config file, selects the correct decoder from the file extension, decodes the file into key-value data, and maps those values into a struct.
 
