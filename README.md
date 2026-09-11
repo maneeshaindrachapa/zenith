@@ -71,6 +71,46 @@ Strict mapping is available when unknown fields should fail fast:
 err := zenith.Load("config.json", &cfg, zenith.WithStrictMapping())
 ```
 
+`Load` and `Decode` map into a non-nil pointer to a struct. They do not accept
+`map[string]any` as a target. To read the complete decoded document without
+struct mapping, use the public codec registry directly:
+
+```go
+package main
+
+import (
+    "fmt"
+    "log"
+    "os"
+
+    "github.com/maneeshaindrachapa/zenith/encoding"
+)
+
+func main() {
+    data, err := os.ReadFile("config.json")
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    decoder, err := encoding.DecoderFor("json")
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    values := make(map[string]any)
+    if err := decoder.Decode(data, &values); err != nil {
+        log.Fatal(err)
+    }
+
+    fmt.Printf("%#v\n", values)
+}
+```
+
+For a file whose format is identified by its extension, get the extension
+with `filepath.Ext(path)` and pass it to `encoding.DecoderFor`. The decoder
+returns the whole top-level document as `map[string]any`; nested objects and
+arrays remain nested maps and slices.
+
 By default, an explicit empty string in config overwrites the existing struct value. To keep existing values when the config value is `""`, use:
 
 ```go
@@ -153,6 +193,45 @@ func (c *Config) Validate() error {
 
 Mapping errors include nested paths, for example `database.max_connections`.
 
+#### Field Checks and Conversion
+
+Mapping is permissive about field names and common scalar representations, but
+it still checks values before assigning them:
+
+- Field names are matched case-insensitively after removing `_` and `-`.
+- Values can be converted to strings, booleans, signed and unsigned integers,
+    floats, `time.Duration`, and slices when the value is valid for the target
+    type. Fractional values are not silently truncated into integers, and
+    negative values are rejected for unsigned integers.
+- Nested structs and slices are checked recursively. Conversion failures
+    report the field path, such as `database.max_connections` or
+    `hosts[1]`.
+- Pointer fields are allocated when a value is present. Fields implementing
+    `encoding.TextUnmarshaler` can perform their own validation.
+- Exported fields are mapped. Unexported fields and fields tagged with `-`
+    are ignored.
+
+Use strict mapping when the configuration must not contain keys that are not
+represented by the target struct. Strict checking is recursive and reports the
+first unknown key in sorted order:
+
+```go
+type Config struct {
+	Name string `json:"name"`
+}
+
+var cfg Config
+err := zenith.Load("config.json", &cfg, zenith.WithStrictMapping())
+if errors.Is(err, zenith.ErrUnknownField) {
+	// A key such as "logging.level" was not represented by Config.
+}
+```
+
+Strict mapping does not make fields required. Mark fields explicitly with
+`required:"true"`, `validate:"required"`, or `zenith:",required"` when a
+value must be present and non-empty. Defaults apply only when a field is
+missing; they do not replace an explicitly supplied empty string.
+
 ### Error Handling
 
 Zenith wraps package-originated failures with one structured error type, `ConfigError`, plus sentinel kinds so callers can use `errors.Is` and `errors.As`. Lower-level causes are preserved:
@@ -164,6 +243,19 @@ if errors.Is(err, zenith.ErrUnsupportedFormat) {
 }
 ```
 
+The exported sentinel kinds are:
+
+- `ErrUnsupportedFormat`: no decoder is registered for the requested format.
+- `ErrUnknownField`: strict mapping found a key with no matching struct field.
+- `ErrRequiredField`: a required field is missing or empty.
+- `ErrMissingExtension`: `Load` was given a path without a file extension.
+- `ErrReadFile`: the file could not be read.
+- `ErrEncode` and `ErrDecode`: encoding or decoding failed.
+- `ErrInvalidTarget`: the target is not a non-nil pointer to a struct.
+- `ErrInvalidValue`: a value cannot be converted or assigned to its field.
+- `ErrValidation`: the target's `Validate() error` method returned an error.
+- `ErrRegistry`: a codec registration request was invalid.
+
 Strict mapping returns `ErrUnknownField` with the rejected field path:
 
 ```go
@@ -171,7 +263,7 @@ err := zenith.Load("config.json", &cfg, zenith.WithStrictMapping())
 
 var configErr *zenith.ConfigError
 if errors.As(err, &configErr) {
-	log.Println(configErr.Path)
+    log.Println(configErr.FieldPath())
 }
 ```
 
@@ -184,7 +276,30 @@ if errors.As(err, &reasoned) {
 }
 ```
 
-When an underlying library or filesystem operation fails, `ConfigError.Cause()` returns that lower-level error.
+`ConfigError` also exposes the error metadata through small interfaces:
+
+- `zenith.Kinded` provides `ErrorKind()`.
+- `zenith.FieldPathed` provides `FieldPath()`.
+- `zenith.Formatted` provides `FormatName()`.
+- `zenith.Reasoned` provides `ErrorReason()`.
+- `zenith.Caused` provides `Cause()`.
+
+When an underlying library or filesystem operation fails, `ConfigError.Cause()`
+returns that lower-level error. You can inspect both the sentinel and the cause:
+
+```go
+err := zenith.Load("config.json", &cfg)
+if err != nil {
+    var configErr *zenith.ConfigError
+    if errors.As(err, &configErr) {
+        log.Printf("kind=%v path=%q format=%q reason=%q", configErr.ErrorKind(), configErr.FieldPath(), configErr.FormatName(), configErr.ErrorReason())
+        if cause := configErr.Cause(); cause != nil {
+            log.Printf("cause: %v", cause)
+        }
+    }
+    log.Fatal(err)
+}
+```
 
 ## Supported Formats
 
