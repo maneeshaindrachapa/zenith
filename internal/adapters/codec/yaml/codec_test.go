@@ -1,9 +1,12 @@
 package yaml
 
 import (
+	stderrors "errors"
 	"reflect"
 	"strings"
 	"testing"
+
+	zenitherrors "github.com/maneeshaindrachapa/zenith/internal/errors"
 )
 
 func TestEndecEncode(t *testing.T) {
@@ -24,11 +27,12 @@ func TestEndecEncode(t *testing.T) {
 	output := string(encoded)
 	for _, want := range []string{
 		"enabled: true",
-		`hosts: ["localhost", "example.com"]`,
-		`name: "Zenith"`,
+		"hosts:",
+		"- localhost",
+		"name: Zenith",
 		"port: 8080",
 		"database:",
-		`  host: "db.local"`,
+		"host: db.local",
 		"  max_connections: 10",
 	} {
 		if !strings.Contains(output, want) {
@@ -56,12 +60,12 @@ database:
 
 	want := map[string]any{
 		"name":    "Zenith",
-		"port":    int64(8080),
+		"port":    8080,
 		"enabled": true,
 		"hosts":   []any{"localhost", "example.com"},
 		"database": map[string]any{
 			"host":            "db.local",
-			"max_connections": int64(10),
+			"max_connections": 10,
 		},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -96,19 +100,61 @@ func TestEndecRoundTrip(t *testing.T) {
 }
 
 func TestEndecErrors(t *testing.T) {
-	if _, err := (Endec{}).Encode(map[string]any{"unsupported": []int{1}}); err == nil {
+	if _, err := (Endec{}).Encode(map[string]any{"unsupported": func() {}}); err == nil {
 		t.Fatal("Encode() returned nil error for unsupported value")
+	} else {
+		assertConfigError(t, err, zenitherrors.ErrEncode)
 	}
-	if err := (Endec{}).Decode([]byte(" name: value"), new(map[string]any)); err == nil {
-		t.Fatal("Decode() returned nil error for invalid indentation")
+
+	for _, input := range [][]byte{
+		[]byte("name:\n\tvalue"),
+		[]byte("name \"Zenith\""),
+		[]byte("name: \"unterminated"),
+	} {
+		if err := (Endec{}).Decode(input, new(map[string]any)); err == nil {
+			t.Fatalf("Decode(%q) returned nil error", input)
+		} else {
+			assertConfigError(t, err, zenitherrors.ErrDecode)
+		}
 	}
-	if err := (Endec{}).Decode([]byte("name \"Zenith\""), new(map[string]any)); err == nil {
-		t.Fatal("Decode() returned nil error for invalid line")
-	}
-	if err := (Endec{}).Decode([]byte("name: \"unterminated"), new(map[string]any)); err == nil {
-		t.Fatal("Decode() returned nil error for invalid string")
-	}
+
 	if err := (Endec{}).Decode([]byte("name: Zenith"), nil); err == nil {
 		t.Fatal("Decode() returned nil error for nil destination")
+	} else {
+		assertConfigError(t, err, zenitherrors.ErrDecode)
+	}
+}
+
+func assertConfigError(t *testing.T, err error, kind error) {
+	t.Helper()
+	if !stderrors.Is(err, kind) {
+		t.Fatalf("error = %v, want %v", err, kind)
+	}
+	var configErr *zenitherrors.ConfigError
+	if !stderrors.As(err, &configErr) {
+		t.Fatalf("error = %v, want ConfigError", err)
+	}
+}
+
+func TestEndecDecodeStandardYAMLSyntax(t *testing.T) {
+	input := []byte(`
+name: 'Zenith' # inline comment
+services:
+  - name: api
+    ports:
+      - 8080
+      - 8081
+`)
+
+	var got map[string]any
+	if err := (Endec{}).Decode(input, &got); err != nil {
+		t.Fatalf("Decode() returned error: %v", err)
+	}
+	if got["name"] != "Zenith" {
+		t.Fatalf("name = %#v, want %q", got["name"], "Zenith")
+	}
+	services, ok := got["services"].([]any)
+	if !ok || len(services) != 1 {
+		t.Fatalf("services = %#v, want one service", got["services"])
 	}
 }

@@ -1,8 +1,11 @@
 package dotenv
 
 import (
+	stderrors "errors"
 	"strings"
 	"testing"
+
+	zenitherrors "github.com/maneeshaindrachapa/zenith/internal/errors"
 )
 
 func TestEndecEncode(t *testing.T) {
@@ -49,20 +52,43 @@ func TestEndecDecode(t *testing.T) {
 func TestEndecErrors(t *testing.T) {
 	codec := Endec{}
 
-	if _, err := codec.Encode(map[string]any{"bad-key": "value"}); err == nil {
-		t.Error("Encode() expected an error for an invalid key")
+	for _, input := range []map[string]any{
+		{"bad-key": "value"},
+		{"COUNT": 42},
+	} {
+		if _, err := codec.Encode(input); err == nil {
+			t.Errorf("Encode(%#v) expected an error", input)
+		} else {
+			assertConfigError(t, err, zenitherrors.ErrEncode)
+		}
 	}
-	if _, err := codec.Encode(map[string]any{"COUNT": 42}); err == nil {
-		t.Error("Encode() expected an error for a non-string value")
+
+	for _, input := range [][]byte{
+		[]byte("BROKEN"),
+		[]byte("KEY=\"unterminated"),
+	} {
+		if err := codec.Decode(input, new(map[string]any)); err == nil {
+			t.Errorf("Decode(%q) expected an error", input)
+		} else {
+			assertConfigError(t, err, zenitherrors.ErrDecode)
+		}
 	}
-	if err := codec.Decode([]byte("BROKEN"), new(map[string]any)); err == nil {
-		t.Error("Decode() expected an error for an invalid line")
-	}
-	if err := codec.Decode([]byte("KEY=\"unterminated"), new(map[string]any)); err == nil {
-		t.Error("Decode() expected an error for an invalid quoted value")
-	}
+
 	if err := codec.Decode([]byte("KEY=value"), nil); err == nil {
 		t.Error("Decode() expected an error for a nil destination")
+	} else {
+		assertConfigError(t, err, zenitherrors.ErrDecode)
+	}
+}
+
+func assertConfigError(t *testing.T, err error, kind error) {
+	t.Helper()
+	if !stderrors.Is(err, kind) {
+		t.Fatalf("error = %v, want %v", err, kind)
+	}
+	var configErr *zenitherrors.ConfigError
+	if !stderrors.As(err, &configErr) {
+		t.Fatalf("error = %v, want ConfigError", err)
 	}
 }
 

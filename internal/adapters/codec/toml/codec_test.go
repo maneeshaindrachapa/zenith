@@ -1,9 +1,12 @@
 package toml
 
 import (
+	stderrors "errors"
 	"reflect"
 	"strings"
 	"testing"
+
+	zenitherrors "github.com/maneeshaindrachapa/zenith/internal/errors"
 )
 
 func TestEndecEncode(t *testing.T) {
@@ -24,11 +27,11 @@ func TestEndecEncode(t *testing.T) {
 	output := string(encoded)
 	for _, want := range []string{
 		"enabled = true",
-		`hosts = ["localhost", "example.com"]`,
-		`name = "Zenith"`,
+		"hosts = [",
+		"name = 'Zenith'",
 		"port = 8080",
 		"[database]",
-		`host = "db.local"`,
+		"host = '",
 		"max_connections = 10",
 	} {
 		if !strings.Contains(output, want) {
@@ -97,19 +100,68 @@ func TestEndecRoundTrip(t *testing.T) {
 }
 
 func TestEndecErrors(t *testing.T) {
-	if _, err := (Endec{}).Encode(map[string]any{"unsupported": []int{1}}); err == nil {
+	if _, err := (Endec{}).Encode(map[string]any{"unsupported": func() {}}); err == nil {
 		t.Fatal("Encode() returned nil error for unsupported value")
+	} else {
+		assertConfigError(t, err, zenitherrors.ErrEncode)
 	}
-	if err := (Endec{}).Decode([]byte("name = \"unterminated"), new(map[string]any)); err == nil {
-		t.Fatal("Decode() returned nil error for invalid string")
+
+	for _, input := range [][]byte{
+		[]byte("name = \"unterminated"),
+		[]byte("[ ]"),
+		[]byte("broken"),
+	} {
+		if err := (Endec{}).Decode(input, new(map[string]any)); err == nil {
+			t.Fatalf("Decode(%q) returned nil error", input)
+		} else {
+			assertConfigError(t, err, zenitherrors.ErrDecode)
+		}
 	}
-	if err := (Endec{}).Decode([]byte("[ ]"), new(map[string]any)); err == nil {
-		t.Fatal("Decode() returned nil error for empty section")
-	}
-	if err := (Endec{}).Decode([]byte("broken"), new(map[string]any)); err == nil {
-		t.Fatal("Decode() returned nil error for invalid line")
-	}
+
 	if err := (Endec{}).Decode([]byte("name = \"Zenith\""), nil); err == nil {
 		t.Fatal("Decode() returned nil error for nil destination")
+	} else {
+		assertConfigError(t, err, zenitherrors.ErrDecode)
+	}
+}
+
+func assertConfigError(t *testing.T, err error, kind error) {
+	t.Helper()
+	if !stderrors.Is(err, kind) {
+		t.Fatalf("error = %v, want %v", err, kind)
+	}
+	var configErr *zenitherrors.ConfigError
+	if !stderrors.As(err, &configErr) {
+		t.Fatalf("error = %v, want ConfigError", err)
+	}
+}
+
+func TestEndecDecodeStandardTOMLSyntax(t *testing.T) {
+	input := []byte(`
+title = 'Zenith' # inline comment
+
+[database.connection]
+host = 'db.local'
+ports = [8080, 8081]
+`)
+
+	var got map[string]any
+	if err := (Endec{}).Decode(input, &got); err != nil {
+		t.Fatalf("Decode() returned error: %v", err)
+	}
+	if got["title"] != "Zenith" {
+		t.Fatalf("title = %#v, want %q", got["title"], "Zenith")
+	}
+	database, ok := got["database"].(map[string]any)
+	if !ok {
+		t.Fatalf("database = %#v, want nested table", got["database"])
+	}
+	connection, ok := database["connection"].(map[string]any)
+	if !ok {
+		t.Fatalf("connection = %#v, want two ports", database["connection"])
+	}
+	ports, ok := connection["ports"].([]any)
+	if !ok || len(ports) != 2 {
+		t.Fatalf("ports = %#v, want two ports", connection["ports"])
 	}
 }

@@ -192,7 +192,7 @@ Default registered formats:
 - `yml`
 - `toml`
 
-YAML and TOML support is intentionally lightweight. It is designed for common configuration files with scalar values, arrays, and nested objects.
+YAML and TOML are parsed with standards-compliant libraries and support the syntax defined by their respective formats.
 
 You can inspect the current registry:
 
